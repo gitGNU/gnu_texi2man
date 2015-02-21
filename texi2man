@@ -1,0 +1,572 @@
+#!/usr/bin/perl 
+#
+# texi2man
+# 
+# This program is free software: you can redistribute it and/or modify it 
+# under the terms of the GNU General Public License as published 
+# by the Free Software Foundation; either version 3 of the License, 
+# or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, 
+# but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY 
+# or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License 
+# along with this program. If not, see http://www.gnu.org/licenses/. 
+# 
+# Copyright (C) 2014: Gianluca Zoni (zoninoz) <zoninoz@inventati.org>
+# 
+# For information or to collaborate on the project:
+# https://savannah.nongnu.org/projects/texi2man
+# http://nongnu.org/texi2man
+# 
+# Gianluca Zoni
+# http://inventati.org/zoninoz
+# zoninoz@inventati.org
+#
+
+use strict;
+use Getopt::Std;
+use Getopt::Long;
+
+############ init
+$ENV{LANG} =~ /^(.+)_.+$/;
+my $lang="$1";
+$lang = 'us' if ($lang ne 'it');
+
+my %help_msg = (
+    'it' => "Uso: texi2man [-h|--help] INFILE [-o OUTFILE]\n",
+    'us' => "Usage: texi2man [-h|--help] INFILE [-o OUTFILE]\n"
+    );
+
+
+############ Std Options
+my $options_pattern="o:hv";
+my $VERSION="1.0";
+$Getopt::Std::STANDARD_HELP_VERSION = 'true';
+$Getopt::Std::OUTPUT_HELP_VERSION = "";
+
+
+sub HELP_MESSAGE {
+    print "$help_msg{$lang}";
+}
+
+sub VERSION_MESSAGE {
+    print "$VERSION\n";
+}
+
+
+## copy all argvs in @argv
+my @argv;
+if (@ARGV) {
+    @argv=@ARGV;
+    splice(@ARGV, 0, 1) if ($ARGV[0] =~ /^[^\-]/);
+} else {
+    HELP_MESSAGE; 
+    exit; 
+}
+
+## delete not (options and args of options) in @ARGV
+for (my $i=0; $i<=$#ARGV; $i++) {
+    if ($ARGV[$i] =~ /(^-[^$options_pattern]|^[^\-])/) { 
+	if ($ARGV[$i+1] =~ /^[^\-]/) {
+	    splice(@ARGV, $i+1, 1);
+	}
+    }
+}
+
+## get options and their arguments
+our %opts;
+$opts{'v'}=0;
+$opts{'h'}=0;
+getopts($options_pattern, \%opts);
+
+# ##
+# foreach my $key (keys(%opts)) {
+#     print "$key => $opts{$key}\n";
+# }
+
+
+########### Long Options
+our $result=GetOptions(
+    "version|v" => \$opts{'v'},
+    "help|h|?" => \$opts{'h'}
+    );
+
+HELP_MESSAGE && exit if $opts{'h'};
+VERSION_MESSAGE if $opts{'v'};
+
+
+########### other arguments
+## delete options in @args
+@argv = map(
+    {
+	grep( /^[^\-]/, $_);
+    }
+    @argv
+    );
+
+## delete arguments of options in @argv
+for (my $i=0; $i<=$#argv; $i++) {
+    foreach my $k (keys(%opts)) {
+	if ($opts{$k} eq $argv[$i]) {
+	    splice(@argv, $i, 1);
+	}
+    }
+}
+
+
+
+########################################################################
+# MACROS: keys=texi => values=man
+#
+# are FILTERS: array of hash (of regex in keys and values)
+# ---------------------------------
+# noArgMacro []{}
+# lineArgMacro []{}
+# bracesArgMacro []{}
+# blockMacro []{}
+########################################################################
+
+
+my @regex_esc=('\\\\', '@', '$', '%');     # regex + str
+my @str_esc=('\\');                      # str
+
+sub escape (\@$){
+    my @escs = @{$_[0]};
+    my $item = $_[1];
+    foreach my $esc (@escs) {
+	$item =~ s,\Q$esc\E,\\$esc,g;
+    }
+    return $item;
+}
+
+
+
+my %manMacro;
+
+# translation of special characters 
+my %manMacro=(
+    '@`a' => 'à',
+    '@`e' => 'è',
+    q|@'e| => 'é',
+    '@`i' => 'ì',
+    '@`o' => 'ò',
+    '@`u' => 'ù',
+    '@`A' => 'À',
+    '@`O' => 'Ò',
+    '@`U' => 'Ù',
+    '@ss{}' => '�'
+    );
+
+$manMacro{'^.*\\input\s+texinfo.*'} = '';
+$manMacro{'@c\s@ifman\s(.*)'}    = '$1\\';
+$manMacro{'\\'} 	            = '\\\\';
+
+$manMacro{'@noindent'} 	            = '';
+$manMacro{'@copyright{}'}           = '(C)';
+$manMacro{'\.\.\.'} 	            = '\\&...';
+$manMacro{'@{'} 	            = '{';
+$manMacro{'@}'} 	            = '}';
+#$manMacro{'@\*'}	            = '.br';
+#$manMacro{'@sp'}	            = '.br';
+#$manMacro{'@\s@\s'}                 = '\\fB \\fP';  # hack hack this works even on
+				      # the beginning of a line
+#$manMacro{'\.@ '}                   = '\\fB \\fP';
+#$manMacro{'@\-'}	            = '';
+
+#$texiMacro{'\\Tab'}	= '\n';		# end of column in a table environment
+
+$manMacro{'@ifhtml.*'}                   = '';
+$manMacro{'@end ifhtml.*'}                   = '';
+$manMacro{'@b\{([^}]+)\}'}                   = '\\fB$1\\fP';
+$manMacro{'@emph\{([^}]+)\}'}   	    = '\\fI$1\\fP'; 	
+$manMacro{'@strong\{([^}]+)\}'}	    = '\\fB$1\\fP';
+$manMacro{'@samp\{([^}]+)\}'}	            = '\\fB$1\\fP';	
+$manMacro{'@command\{([^}]+)\}'}	    = '\\fB$1\\fP';
+$manMacro{'@code\{([^}]+)\}'}	            = '\\fB$1\\fP';
+$manMacro{'@kbd\{([^}]+)\}'}	            = '\\fB$1\\fP';
+#$manMacro{'@t\{([^}]+)\}'} 	            = '$1';
+$manMacro{'@acronym\{([^}]+)\}'} 	    = '\\fI$1\\fP';
+
+$manMacro{'@node\s+.+'}             = "";
+$manMacro{'@.+index.+'}              = "";
+
+$manMacro{'@section\s+(.+)'}        = "\n".'.SH $1'."\t";
+$manMacro{'@subsection\s+(.+)'}	    = "\n".'.SS $1'."\t";
+$manMacro{'@subsubsection\s+(.+)'}  = "\n".'.TP'."\n".'.SS $1'."\t";
+
+$manMacro{'@unnumberedsec\s+(.+)'}        = "\n".'.SH $1'."\t";
+$manMacro{'@unnumberedsubsec\s+(.+)'}	    = "\n".'.SS $1'."\t";
+$manMacro{'@unnumberedsubsubsec\s+(.+)'}  = "\n".'.TP'."\n".'.SS $1'."\t";
+
+$manMacro{'@indent.*'}              = "\n".'.RS';
+$manMacro{'@noindent.*'}              = "\n".'.RS -7';
+$manMacro{'@paragraphindent.*'}     = "\n".'.PP';
+$manMacro{'@heading'}               = "\n".'.SH $1'."\t";
+$manMacro{'@subheading'}	    = "\n".'.SS $1'."\t";
+$manMacro{'@subsubheading'}         = "\n".'.TP'."\n".'.SS $1'."\t";
+
+$manMacro{'@option\{([^}]+)\}'} 	    = '\\fB$1\\fP';
+$manMacro{'@file\{([^}]+)\}'} 	    = '\\fI$1\\fP';
+
+$manMacro{'@var\{([^}]+)\}'} 	    = '\\fB\\U$1\\E\\fP';
+$manMacro{'@email\{([^}]+)\}'}	    = '\\fB$1\\fP';
+$manMacro{'@url\{([^}]+)\}'}	    = '\\fB$1\\fP';
+
+$manMacro{'@@'}	                    = '@';
+$manMacro{'(^\.$|\.\s.*)'}         = '\&$1';
+
+# the end: delete every other texinfo command
+#$manMacro{'([^.]+)@[^@]+\s'}         = '$1';
+
+
+
+#### DEFAULT MAN-PAGE HEADER
+
+## MAN-PAGE title
+#my $prog;
+my $manpage_title = undef;
+
+## MAN-PAGE section
+my $manpage_section = 1;
+
+## MAN-PAGE date
+my $manpage_date = gmtime();
+
+## MAN-PAGE source
+my @manpage_source;
+foreach my $i (1,3,5..8) {
+    $manpage_source[$i] ='GNU';
+}
+$manpage_source[2] ='Linux';
+$manpage_source[4] ='Linux';
+
+## MAN-PAGE manual
+my @manpage_manual;
+$manpage_manual[1] = 'User Commands';
+$manpage_manual[2] = 'System calls';
+$manpage_manual[3] = 'Library functions';
+$manpage_manual[4] = 'Devices';
+$manpage_manual[5] = 'File Formats and Conventions';
+$manpage_manual[6] = 'Games';
+$manpage_manual[7] = 'Overviews, Conventions, and Miscellaneous';
+$manpage_manual[8] = 'Superuser and System Administration Commands'; 
+
+
+sub makeheader ($) {
+    my $infile = shift();
+    my %headers;
+    
+    my $settitle;
+    my $mantitle;
+    my $mansection;
+    my $mandate;
+    my $mansource;
+    my $manmanual;
+
+    open(INFILE, "< $infile");
+    while (my $line = <INFILE>) {
+        ## program filename
+	$headers{filename} = "$1" if $line =~ m/\@setfilename (.+)/g;
+	$headers{filename} =~ s/(.+)\s*\.[^.]+$/$1/g;
+	$settitle = "$1" if $line =~ m/\@settitle (.+)/g;
+
+	$mantitle = "$1" if $line =~ m/\@mantitle\{(.+?)\}/g;
+	$mansection = "$1" if $line =~ m/\@mansection\{(.+?)\}/g;
+	$mandate = "$1" if $line =~ m/\@mandate\{(.+?)\}/g;
+	$mansource = "$1" if $line =~ m/\@mansource\{(.+?)\}/g;
+	$manmanual = "$1" if $line =~ m/\@manmanual\{(.+?)\}/g;
+
+	if ($line =~ m/\@manheaders\{(.+?)\}/) {
+	    my ($title, $section, $date, $source, $manual) = split(',', $1);
+	    %headers = (
+		title => $title,
+		section => $section,
+		date => $date,
+		source => $source,
+		manual => $manual,
+		);
+	}
+    }
+    close(INFILE);
+    
+    ## program name
+    $headers{title} = $mantitle if ((! $headers{'title'}) && $mantitle);
+    $headers{title} = $settitle if ((! $headers{'title'}) && $settitle);
+    $headers{title} = $manpage_title if ((! $headers{'title'}) && $manpage_title);
+
+    ## section number
+    $headers{section} = $mansection if ((! $headers{'section'}) && $mansection);
+    $headers{section} = $manpage_section if ((! $headers{'section'}) && $manpage_section);
+
+    ## last update
+    $headers{date} = $mandate if ((! $headers{'date'}) && $mandate);
+    $headers{date} = $manpage_date if ((! $headers{'date'}) && $manpage_date);
+
+    ## source type
+    $headers{source} = $mansource if ((! $headers{'source'}) && $mansource);
+    $headers{source} = $manpage_source[$headers{section}] if ((! $headers{'source'}) && $manpage_source[$headers{section}]);
+
+    ## section title
+    $headers{manual} = $manmanual if ((! $headers{'manual'}) && $manmanual);
+    $headers{manual} = $manpage_manual[$headers{section}] if ((! $headers{'manual'}) && $manpage_manual[$headers{section}]);
+
+    ##  ".TH title section date source manual"
+    %headers;
+}
+
+
+sub transcode (\%$) {
+    my %filter = %{$_[0]};
+    my $line = $_[1];
+    my ($pattern_in, $pattern_out); 
+
+    chomp($line);
+    foreach my $key (keys(%filter)){
+	$pattern_in = escape(@regex_esc, $key);
+	$pattern_out = escape(@str_esc, $filter{$key});
+	$pattern_out =~ s/\\\\(U|L|E)/\\$1/g;
+	my $code = "\$line =~ s/$pattern_in/$pattern_out/g";
+	eval($code);
+    }
+    return $line;
+}
+
+sub makeman (\%\@$) {
+    my %headers = %{$_[0]};
+    my @texi4man = @{$_[1]};
+    my $outfile = $_[2];
+    my $text;
+    my ($indent_item, $indent_contents);
+    my (@items_type, @items_args);
+    my $indent = 5;
+    ## ".TH title section date source manual"
+    $text = '.TH "'.$headers{'title'}.'" "'.$headers{'section'}.'" "'.$headers{'date'}.'" "'.$headers{'source'}.'" "'.$headers{'manual'}.'"';
+
+    while (@texi4man) {
+	my $line = shift (@texi4man);
+	chomp($line);
+        push @items_type, 'table' if $line =~ /\@table/;
+	push @items_type, 'itemize' if $line =~ /\@itemize/;
+	push @items_type, 'enumerate' if $line =~ /\@enumerate/;
+
+	if ($items_type[-1] eq 'table'){
+	    if ($line =~ "\@table (\@.+)"){
+	    	$indent_contents = $indent;
+	    	$manMacro{'@table\s+@.+'} = "\n".'.RS '."$indent_contents\n";
+		if ($1 =~ '@emph'|'@file'){
+		    push @items_args, 'I';
+		} else {
+		    push @items_args, 'B'
+		}
+	    } elsif ($line =~ "\@end table") {
+	    	$indent_contents = -$indent;
+	    	$manMacro{'@end\s+table.*'} = "\n".'.RS '."$indent_contents\n";
+		pop @items_type;
+		pop @items_args;
+	    } elsif ($line =~ '@item\s+(.+)'){
+	    	$indent_item = -$indent;
+	    	$indent_contents = $indent;
+	    	$manMacro{'@item\s+(.+)'} = ".RS $indent_item\n".'\\f'."$items_args[-1]".'$1\\fP'."\n.RS $indent_contents";
+	    } elsif ($line =~ '@itemx'){
+	    	$indent_item = -$indent;
+	    	$indent_contents = $indent;
+	    	$manMacro{'@itemx\s+(.+)'} = ".RS $indent_item\n".'\\f'."$items_args[-1]".'$1\\fP'."\n.RS $indent_contents";
+	    }
+	}
+	if ($items_type[-1] eq 'itemize'){
+	    if ($line =~ '@itemize\s+(\@.+)'){
+		$indent_contents = $indent;
+		$manMacro{'@itemize\s+@.+'} = "\n".'.RS '."$indent_contents\n";
+		if ($1 =~ ('@minus')){
+		    push @items_args, '-';
+		} elsif ($1 =~ ('@w{}')){
+		    push @items_args, ' ';
+		}else {
+		    push @items_args, '*';
+		} 
+	    } elsif ($line =~ '@itemize[^@]*$'){
+		$indent_contents = $indent;
+		$manMacro{'@itemize'} = "\n".'.RS '."$indent_contents\n";
+		push @items_args, '*';
+	    } elsif ($line =~ '@end\s+itemize.*') {
+		$indent_contents = -$indent;
+		$manMacro{'@end\s+itemize.*'} = "\n".'.RS '."$indent_contents\n";
+		pop @items_type;
+		pop @items_args;
+		delete $manMacro{'(@item)'};
+	    } elsif ($line =~ '(@item)'){
+		$indent_item = 0;
+		$indent_contents = 2;
+		$manMacro{'(@item)'} = ".RS $indent_item\n.IP \"\\fI$items_args[$#items_type]\\fP\" $indent_contents";
+	    } 
+	}
+	if ($items_type[-1] eq 'enumerate'){
+	    if ($line =~ '@enumerate\s+([0-9]+)'){
+		$indent_contents = $indent;
+		$manMacro{'@enumerate'}	= "\n".'.RS '."$indent_contents\n";
+		push @items_args, "$1";
+	    } elsif ($line =~ '@enumerate[^0-9]*$'){
+		$indent_contents = $indent;
+		$manMacro{'@enumerate'}	= "\n".'.RS '."$indent_contents\n";
+		push @items_args, 0;
+	    } elsif ($line =~ '@end\s+enumerate.*') {
+		$indent_contents = -$indent;
+		$manMacro{'@end\s+enumerate.*'} = "\n".'.RS '."$indent_contents\n";
+		pop @items_type;
+		pop @items_args;
+		delete $manMacro{'(@item)'};
+	    } elsif ($line =~ '(@item)'){
+      		++$items_args[$#items_type];
+		$indent_item = 0;
+		$indent_contents = 3;
+		$manMacro{'(@item)'} = ".RS $indent_item\n.IP \"\\fI$items_args[$#items_type].\\fP\" $indent_contents";
+	    } 
+	}
+
+	## $text .= transcode(%manMacro, $line)."\n";
+	$line = transcode(%manMacro, $line)."\n";
+	## consistency of \\f(I|B|P)
+	while($line =~ /(\\fB)([^\\]*)([^f]*)(\\fI)([^\\]*)(\\fP)/ || $line =~ /(\\fI)([^\\]*)([^f]*)(\\fB)([^\\]*)(\\fP)/){
+	    $line =~ s/(\\fB)([^\\]*)([^f]*)(\\fI)([^\\]*)(\\fP)/$1$2$3\\fP$4$5$6\\fB/g;
+	    $line =~ s/(\\fI)([^\\]*)([^f]*)(\\fB)([^\\]*)(\\fP)/$1$2$3\\fP$4$5$6\\fI/g;
+	}
+	while($line =~ /(\\fB)([^\\]*)([^f]*)(\\fB)([^\\]*)([^f]*)(\\fP)([^\\]*)([^f]*)(\\fP)/ || \
+	      $line =~ /(\\fI)([^\\]*)([^f]*)(\\fI)([^\\]*)([^f]*)(\\fP)([^\\]*)([^f]*)(\\fP)/){
+	    $line =~ s/(\\fI)([^\\]*)([^f]*)(\\fI)([^\\]*)([^f]*)(\\fP)([^\\]*)([^f]*)(\\fP)/$1$2$3$5$6$8$9$10/g;
+	    $line =~ s/(\\fB)([^\\]*)([^f]*)(\\fB)([^\\]*)([^f]*)(\\fP)([^\\]*)([^f]*)(\\fP)/$1$2$3$5$6$8$9$10/g;
+	}
+
+	$text .= $line;
+    }
+
+    if (defined $text) {
+	open(OUTFILE, "> $outfile");
+	print OUTFILE $text;
+	close(OUTFILE);
+    }
+}
+
+sub check_blocks ($) {
+    my $infile = shift();
+    open(INFILE, "< $infile");
+    while (my $line = <INFILE>) {
+	if ($line =~ /\@c \@man([\n \ ]|\{[^0-9]+\})/ ) {
+	    close(INFILE);
+	    return 1;
+	}
+    }
+    close(INFILE);
+    return 0;
+}
+
+sub repeat ($$) {
+    my ($string, $loops) = @_;
+    my $stri;
+    while ($loops>0) {
+	$stri .= $string;
+	$loops--;
+    }
+    return $stri;
+}
+
+sub maketexi ($) {
+    my $infile = shift();
+    my @texi4man;
+    my @lines;
+    my $add = 'false';
+    my $noindex = check_blocks($infile);
+
+    my $i=-1;
+    open(INFILE, "< $infile");
+    while (my $line = <INFILE>) {
+	if ($line =~ /(.*)\@c \@end man/ ){
+	    $add = 'false' ;
+	    ${$lines[$i]}[@{$lines[$i]}] = $1 if $1 ne '';
+	}
+	if ($add eq 'true') {
+	    if ($line =~ /(\@sp) ([0-9]+)/ ) {
+		$line =~ s/\@sp [0-9]+/.br\n/g;
+	    }
+	    ${$lines[$i]}[@{$lines[$i]}] = $line;
+	}
+	if ($line =~ m/\@c \@man[\{\ \n]/ ) {
+	    if ($noindex == 1){
+		$i++;
+	    } else {
+		$i = $line;
+		$i =~ s/\@c \@man\{([0-9]+)\}/\1/g;
+	    }
+	    $add = 'true';
+	}
+    }
+    close(INFILE);
+    for ($i=0; $i<@lines; $i++) {
+	if (defined $lines[$i]) {
+	    for (my $j=0; $j<@{$lines[$i]}; $j++) {
+		$texi4man[@texi4man]=${$lines[$i]}[$j];
+	    }
+	}
+    }
+    return @texi4man;
+}
+
+
+sub print_c ($$) {
+    my ($code, $msg) = @_;
+    do {
+	print "\e[1;34m$msg\e[0m"
+    } if $code == 2;
+}
+
+sub msg {
+    my ($code, $type) = @_;
+    my @err_msg;
+    if (defined $main::infile) {
+	$err_msg[0]{it} = qq|$main::infile non è un file Texinfo|;
+	$err_msg[0]{us} = qq|$main::infile is not a Texinfo file|;
+    }
+    $err_msg[1]{it} = qq|Nessun file in input|;
+    $err_msg[1]{us} = qq|No input file|;
+    
+    $err_msg[2]{it} = qq|Nessun file in output|;
+    $err_msg[2]{us} = qq|No output file|;
+
+    print "$err_msg[$code]{$lang}\n";
+    exit 1 if $type eq 'die';
+}
+
+if (($opts{'o'}) && ($opts{'o'} ne '1') && (@argv <= 1)) {
+    our $outfile=$opts{'o'};
+} 
+
+
+if (@argv>0) {
+    foreach my $infile (@argv) {
+	if (-T "$infile") {
+	    my $outfile = $main::outfile if $main::outfile;
+	    my @texi4man = maketexi($infile);
+	    my %headers4man = makeheader($infile);
+	    
+	    if (! $outfile) {
+		if ($headers4man{'filename'}) {
+		    $outfile = $headers4man{'filename'}.'.'.$headers4man{'section'};
+		} else {
+		    $outfile = 'out.'.$headers4man{'section'};
+		}
+	    }
+	    $outfile =~ s/\s/\-/g;
+	    unless (defined $outfile) {
+		msg(2, 'die');
+	    } 
+
+	    makeman (%headers4man, @texi4man, $outfile);
+	    undef $outfile;
+	} else {
+	    msg(0);
+	}
+    }
+} else {
+    msg(1, 'die');
+}
