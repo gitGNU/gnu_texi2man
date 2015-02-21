@@ -1,0 +1,15 @@
+Texi2man is a perl script. It extracts pieces of text from a file texinfo, recombines them into a new file and transcodes the result from texinfo to groff. With texi2man you can create a new man page in Unix style, extracting it from the source of a hypertext for info or for the web.
+
+I'm still developing:
+- the scripts to install and uninstall the program
+- the texinfo source from which to obtain the manuals of texi2man (man pages, info files and web site)
+
+EXAMPLE
+This program has been used for the documentation of ZigzagDownLoader (ZDL):
+https://savannah.nongnu.org/projects/zdl
+http://nongnu.org/zdl
+
+The entire website and the 'man page' of ZDL are generated from the same texinfo source.
+
+Gianluca Zoni
+zoninoz@inventati.org
