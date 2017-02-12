@@ -156,7 +156,7 @@ my %manMacro=(
     '@`A' => 'Ã€',
     '@`O' => 'Ã’',
     '@`U' => 'Ã™',
-    '@ss{}' => 'ß'
+    '@ss\{\}' => 'ß'
     );
 
 $manMacro{'^.*\\input\s+texinfo.*'} = '';
@@ -164,10 +164,10 @@ $manMacro{'@c\s@ifman\s(.*)'}    = '$1\\';
 $manMacro{'\\'} 	            = '\\\\';
 
 $manMacro{'@noindent'} 	            = '';
-$manMacro{'@copyright{}'}           = '(C)';
+$manMacro{'@copyright\{\}'}           = '(C)';
 $manMacro{'\.\.\.'} 	            = '\\&...';
-$manMacro{'@{'} 	            = '{';
-$manMacro{'@}'} 	            = '}';
+$manMacro{'@\{'} 	            = '{';
+$manMacro{'@\}'} 	            = '}';
 #$manMacro{'@\*'}	            = '.br';
 #$manMacro{'@sp'}	            = '.br';
 #$manMacro{'@\s@\s'}                 = '\\fB \\fP';  # hack hack this works even on
